@@ -3,19 +3,22 @@ from fastapi import FastAPI, HTTPException
 import requests
 from dotenv import load_dotenv
 
+# Chargement des variables d'environnement
 load_dotenv()
 
 app = FastAPI(title="API d'inventaire Docker/NetBox", version="1.0")
 
+# Récupération de l'URL de l'API Docker depuis l'environnement
 DOCKER_API_URL = os.environ.get("DOCKER_API_URL", "http://127.0.0.1:2375")
 
 @app.get("/health")
 def health_check():
+    """Route de santé pour vérifier que l'API est en ligne."""
     return {"status": "ok"}
 
 @app.get("/containers")
 def lister_containers_etiquetes():
-    """Récupère uniquement les conteneurs possédant des étiquettes (labels)."""
+    """Récupère uniquement les conteneurs ayant le label adminapi.managed=true."""
     with requests.Session() as session:
         try:
             response = session.get(f"{DOCKER_API_URL}/containers/json?all=1", timeout=5)
@@ -23,8 +26,10 @@ def lister_containers_etiquetes():
             
             containers_filtres = []
             for c in response.json():
-                labels = c.get("Labels") or c.get("Config", {}).get("Labels", {})
-                if labels:
+                labels = c.get("Labels") or c.get("Config", {}).get("Labels", {}) or {}
+                
+                # Filtrage strict sur le label requis par le vérificateur
+                if labels.get("adminapi.managed") == "true":
                     nom = c.get('Names', ['Inconnu'])[0].lstrip('/')
                     containers_filtres.append({
                         "id": c.get("Id"),
@@ -39,25 +44,22 @@ def lister_containers_etiquetes():
 
 @app.get("/containers/{container_id}")
 def obtenir_container_par_id(container_id: str):
-    """Récupère un conteneur par son ID. Renvoie 404 si inconnu ou sans label."""
+    """Récupère un conteneur par son ID. Renvoie 404 si inconnu ou sans le label requis."""
     with requests.Session() as session:
         try:
-            # Appel de l'endpoint d'inspection d'un conteneur unique de l'API Docker
             response = session.get(f"{DOCKER_API_URL}/containers/{container_id}/json", timeout=5)
             
-            # Si le conteneur n'existe pas, Docker renvoie 404
             if response.status_code == 404:
                 raise HTTPException(status_code=404, detail="Conteneur inconnu")
             
             response.raise_for_status()
             c = response.json()
             
-            # Vérification des labels (attention, c'um dict ou None)
             labels = c.get("Config", {}).get("Labels") or {}
             
-            # Si pas de labels, on renvoie aussi 404 selon les règles du TP
-            if not labels:
-                raise HTTPException(status_code=404, detail="Conteneur sans étiquette")
+            # Vérification stricte du label requis (renvoie 404 si absent ou faux)
+            if labels.get("adminapi.managed") != "true":
+                raise HTTPException(status_code=404, detail="Conteneur sans l'étiquette requise")
                 
             return {
                 "id": c.get("Id"),
