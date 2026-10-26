@@ -1,33 +1,33 @@
 {
-    "date": "2026-10-26 12:05:07",
+    "date": "2026-10-26 12:09:20",
     "containers": [
         {
             "nom": "apirest-netbox-1",
             "image": "netboxcommunity/netbox:v4.7-5.1.1",
             "etat": "running",
-            "cpu_pourcent": 0.01,
-            "memoire_mo": 1084.47
+            "cpu_pourcent": 0.0,
+            "memoire_mo": 1084.05
         },
         {
             "nom": "apirest-netbox-postgres-1",
             "image": "postgres:17-alpine",
             "etat": "running",
-            "cpu_pourcent": 0.0,
-            "memoire_mo": 68.03
+            "cpu_pourcent": 3.41,
+            "memoire_mo": 67.92
         },
         {
             "nom": "apirest-docker-api-1",
             "image": "tecnativa/docker-socket-proxy:v0.4.2",
             "etat": "running",
             "cpu_pourcent": 0.0,
-            "memoire_mo": 22.64
+            "memoire_mo": 24.21
         },
         {
             "nom": "apirest-netbox-redis-1",
             "image": "valkey/valkey:8-alpine",
             "etat": "running",
-            "cpu_pourcent": 0.26,
-            "memoire_mo": 11.71
+            "cpu_pourcent": 0.32,
+            "memoire_mo": 10.5
         },
         {
             "nom": "intrus",
@@ -43,5 +43,9 @@
             "cpu_pourcent": 0.0,
             "memoire_mo": 0.0
         }
-    ]
+    ],
+    "netbox": {
+        "version": "4.7.3",
+        "object_types_count": 163
+    }
 }
