@@ -1,9 +1,9 @@
 import os
 import json
+import sys
 from datetime import datetime
 import requests
 
-# Récupération des configurations depuis l'environnement
 DOCKER_API_URL = os.environ.get("DOCKER_API_URL", "http://127.0.0.1:2375")
 NETBOX_URL = os.environ.get("NETBOX_URL", "http://127.0.0.1:8080")
 NETBOX_TOKEN = os.environ.get("NETBOX_TOKEN", "")
@@ -18,7 +18,6 @@ def generer_inventaire():
         }
     }
     
-    # Headers d'authentification pour NetBox
     headers = {
         "Authorization": f"Token {NETBOX_TOKEN}",
         "Accept": "application/json"
@@ -66,20 +65,20 @@ def generer_inventaire():
                         pass
                 
                 inventaire["containers"].append(container_info)
+                
         except requests.exceptions.RequestException as e:
-            print(f"Erreur de connexion à l'API Docker : {e}")
+            #Sortie en erreur avec message explicite et code non nul
+            sys.exit(f"Erreur critique : Impossible de joindre l'API Docker ({e}). Arrêt du script.")
 
-        # ---PARTIE NETBOX (VERSION ET PAGINATION) ---
+        # --- PARTIE NETBOX ---
         try:
             status_resp = session.get(f"{NETBOX_URL}/api/status/", headers=headers, timeout=5)
             status_resp.raise_for_status()
-            # Récupération de la version NetBox
             inventaire["netbox"]["version"] = status_resp.json().get("netbox-version") or status_resp.json().get("django-version")
         except requests.exceptions.RequestException as e:
-            print(f"Erreur lors de la récupération du statut NetBox : {e}")
+            print(f"Attention : Erreur lors du statut NetBox : {e}")
 
         try:
-            # Pagination sur les object-types de NetBox jusqu'à ce que 'next' soit None
             nb_url = f"{NETBOX_URL}/api/core/object-types/?limit=50"
             total_types = 0
             
@@ -89,13 +88,13 @@ def generer_inventaire():
                 data = nb_resp.json()
                 
                 total_types += len(data.get("results", []))
-                nb_url = data.get("next")  # Passe à la page suivante (ou None si fin)
+                nb_url = data.get("next")
                 
             inventaire["netbox"]["object_types_count"] = total_types
         except requests.exceptions.RequestException as e:
-            print(f"Erreur lors de la pagination NetBox : {e}")
+            print(f"Attention : Erreur lors de la pagination NetBox : {e}")
 
-        # --- ÉCRITURE DANS LE JSON ET AFFICHAGE ---
+        # --- ÉCRITURE DANS LE JSON ---
         with open("inventaire.json", "w", encoding="utf-8") as f:
             json.dump(inventaire, f, indent=4, ensure_ascii=False)
         
