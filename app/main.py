@@ -1,9 +1,11 @@
 import os
 from typing import Literal
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 import requests
+
+from app.securite import exiger_admin, exiger_lecture
 
 load_dotenv()
 
@@ -50,7 +52,7 @@ def health_check():
 
 
 @app.get("/containers")
-def lister_containers_etiquetes():
+def lister_containers_etiquetes(_: str = Depends(exiger_lecture)):
     with requests.Session() as session:
         try:
             response = session.get(f"{DOCKER_API_URL}/containers/json?all=1", timeout=10)
@@ -74,7 +76,7 @@ def lister_containers_etiquetes():
 
 
 @app.get("/containers/{container_id}")
-def obtenir_container_par_id(container_id: str):
+def obtenir_container_par_id(container_id: str, _: str = Depends(exiger_lecture)):
     with requests.Session() as session:
         try:
             data = _verifier_et_recuperer_gere(session, container_id)
@@ -86,7 +88,7 @@ def obtenir_container_par_id(container_id: str):
 
 
 @app.post("/containers", status_code=201)
-def creer_container(demande: ConteneurACreer):
+def creer_container(demande: ConteneurACreer, _: str = Depends(exiger_admin)):
     corps = {
         "Image": demande.image,
         "Labels": {"adminapi.managed": "true"},
@@ -125,7 +127,7 @@ def creer_container(demande: ConteneurACreer):
 
 
 @app.post("/containers/{container_id}/stop")
-def arreter_container(container_id: str):
+def arreter_container(container_id: str, _: str = Depends(exiger_admin)):
     try:
         with requests.Session() as session:
             _verifier_et_recuperer_gere(session, container_id)
@@ -150,7 +152,7 @@ def arreter_container(container_id: str):
 
 
 @app.post("/containers/{container_id}/start")
-def demarrer_container(container_id: str):
+def demarrer_container(container_id: str, _: str = Depends(exiger_admin)):
     try:
         with requests.Session() as session:
             _verifier_et_recuperer_gere(session, container_id)
@@ -174,7 +176,7 @@ def demarrer_container(container_id: str):
 
 
 @app.delete("/containers/{container_id}", status_code=204)
-def supprimer_container(container_id: str):
+def supprimer_container(container_id: str, _: str = Depends(exiger_admin)):
     try:
         with requests.Session() as session:
             _verifier_et_recuperer_gere(session, container_id)
