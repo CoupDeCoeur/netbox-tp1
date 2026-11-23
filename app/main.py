@@ -1,14 +1,15 @@
 import os
 from typing import Literal
+
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, Field
 import requests
 
-from app import netbox_client
-from app.securite import exiger_admin, exiger_lecture
-
 load_dotenv()
+
+from app import netbox_client
+from app.securite import exiger_admin, exiger_lecture, exiger_secret_webhook
 
 app = FastAPI(title="API d'inventaire Docker/NetBox", version="1.0")
 
@@ -20,6 +21,11 @@ ImageAutorisee = Literal["nginx:alpine", "redis:alpine", "httpd:alpine"]
 class ConteneurACreer(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9-]{1,30}$", examples=["web2"])
     image: ImageAutorisee
+
+
+class Alerte(BaseModel):
+    alert: Literal["container_down"]
+    container: str = Field(pattern=r"^[a-z][a-z0-9-]{1,30}$", examples=["web2"])
 
 
 def _formater_detail_conteneur(data: dict) -> dict:
@@ -90,7 +96,7 @@ def obtenir_container_par_id(container_id: str, _: str = Depends(exiger_lecture)
             raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
 
 
-@app.post("/containers", status_code=201)
+@app.post("/containers", status_code=status.HTTP_201_CREATED)
 def creer_container(demande: ConteneurACreer, _: str = Depends(exiger_admin)):
     corps = {
         "Image": demande.image,
@@ -184,7 +190,7 @@ def demarrer_container(container_id: str, _: str = Depends(exiger_admin)):
         raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
 
 
-@app.delete("/containers/{container_id}", status_code=204)
+@app.delete("/containers/{container_id}", status_code=status.HTTP_204_NO_CONTENT)
 def supprimer_container(container_id: str, _: str = Depends(exiger_admin)):
     try:
         with requests.Session() as session:
@@ -201,7 +207,40 @@ def supprimer_container(container_id: str, _: str = Depends(exiger_admin)):
             del_resp.raise_for_status()
 
             netbox_client.supprimer_vm(detail["name"])
-            return Response(status_code=204)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
+
+
+@app.post("/webhooks/alerts", status_code=status.HTTP_202_ACCEPTED)
+def recevoir_alerte_webhook(
+    alerte: Alerte,
+    _: None = Depends(exiger_secret_webhook),
+):
+    try:
+        with requests.Session() as session:
+            data = _verifier_et_recuperer_gere(session, alerte.container)
+            container_id = data["Id"]
+            etat_actuel = ((data.get("State") or {}).get("Status") or "").lower()
+            detail = _formater_detail_conteneur(data)
+
+            if etat_actuel != "running":
+                start_resp = session.post(
+                    f"{DOCKER_API_URL}/containers/{container_id}/start",
+                    timeout=15,
+                )
+                if start_resp.status_code == 404:
+                    raise HTTPException(status_code=404, detail="Conteneur introuvable au démarrage")
+                if start_resp.status_code not in (204, 304):
+                    start_resp.raise_for_status()
+
+                netbox_client.definir_statut_vm(detail["name"], "active")
+                data_apres = _verifier_et_recuperer_gere(session, container_id)
+                return _formater_detail_conteneur(data_apres)
+
+            return detail
     except HTTPException:
         raise
     except requests.exceptions.RequestException as e:
