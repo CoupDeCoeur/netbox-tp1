@@ -32,6 +32,18 @@ def _formater_detail_conteneur(data: dict) -> dict:
     }
 
 
+def _verifier_et_recuperer_gere(session: requests.Session, container_id: str) -> dict:
+    response = session.get(f"{DOCKER_API_URL}/containers/{container_id}/json", timeout=10)
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail="Conteneur inconnu")
+    response.raise_for_status()
+    data = response.json()
+    labels = (data.get("Config") or {}).get("Labels") or {}
+    if labels.get("adminapi.managed") != "true":
+        raise HTTPException(status_code=404, detail="Conteneur non géré")
+    return data
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -65,18 +77,8 @@ def lister_containers_etiquetes():
 def obtenir_container_par_id(container_id: str):
     with requests.Session() as session:
         try:
-            response = session.get(f"{DOCKER_API_URL}/containers/{container_id}/json", timeout=10)
-            if response.status_code == 404:
-                raise HTTPException(status_code=404, detail="Conteneur inconnu")
-            response.raise_for_status()
-            c = response.json()
-
-            labels = c.get("Config") or {}
-            labels = labels.get("Labels") or {}
-            if labels.get("adminapi.managed") != "true":
-                raise HTTPException(status_code=404, detail="Conteneur sans l'étiquette requise")
-
-            return _formater_detail_conteneur(c)
+            data = _verifier_et_recuperer_gere(session, container_id)
+            return _formater_detail_conteneur(data)
         except HTTPException:
             raise
         except requests.exceptions.RequestException as e:
@@ -114,12 +116,57 @@ def creer_container(demande: ConteneurACreer):
             if demarrage.status_code not in (204, 304):
                 demarrage.raise_for_status()
 
-            inspection = session.get(
-                f"{DOCKER_API_URL}/containers/{container_id}/json",
-                timeout=10,
+            data = _verifier_et_recuperer_gere(session, container_id)
+            return _formater_detail_conteneur(data)
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
+
+
+@app.post("/containers/{container_id}/stop")
+def arreter_container(container_id: str):
+    try:
+        with requests.Session() as session:
+            _verifier_et_recuperer_gere(session, container_id)
+
+            stop_resp = session.post(
+                f"{DOCKER_API_URL}/containers/{container_id}/stop",
+                params={"t": 2},
+                timeout=30,
             )
-            inspection.raise_for_status()
-            return _formater_detail_conteneur(inspection.json())
+            if stop_resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Conteneur inconnu")
+            if stop_resp.status_code == 304:
+                raise HTTPException(status_code=409, detail="Le conteneur est déjà arrêté")
+            stop_resp.raise_for_status()
+
+            data = _verifier_et_recuperer_gere(session, container_id)
+            return _formater_detail_conteneur(data)
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
+
+
+@app.post("/containers/{container_id}/start")
+def demarrer_container(container_id: str):
+    try:
+        with requests.Session() as session:
+            _verifier_et_recuperer_gere(session, container_id)
+
+            start_resp = session.post(
+                f"{DOCKER_API_URL}/containers/{container_id}/start",
+                timeout=15,
+            )
+            if start_resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Conteneur inconnu")
+            if start_resp.status_code == 304:
+                raise HTTPException(status_code=409, detail="Le conteneur est déjà démarré")
+            start_resp.raise_for_status()
+
+            data = _verifier_et_recuperer_gere(session, container_id)
+            return _formater_detail_conteneur(data)
     except HTTPException:
         raise
     except requests.exceptions.RequestException as e:
