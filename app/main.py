@@ -1,7 +1,7 @@
 import os
 from typing import Literal
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 import requests
 
@@ -167,6 +167,28 @@ def demarrer_container(container_id: str):
 
             data = _verifier_et_recuperer_gere(session, container_id)
             return _formater_detail_conteneur(data)
+    except HTTPException:
+        raise
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
+
+
+@app.delete("/containers/{container_id}", status_code=204)
+def supprimer_container(container_id: str):
+    try:
+        with requests.Session() as session:
+            _verifier_et_recuperer_gere(session, container_id)
+
+            del_resp = session.delete(
+                f"{DOCKER_API_URL}/containers/{container_id}",
+                params={"force": "true"},
+                timeout=30,
+            )
+            if del_resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Conteneur inconnu")
+            del_resp.raise_for_status()
+
+            return Response(status_code=204)
     except HTTPException:
         raise
     except requests.exceptions.RequestException as e:
