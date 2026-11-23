@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 import requests
 
+from app import netbox_client
 from app.securite import exiger_admin, exiger_lecture
 
 load_dotenv()
@@ -71,6 +72,8 @@ def lister_containers_etiquetes(_: str = Depends(exiger_lecture)):
                         "labels": labels,
                     })
             return containers_filtres
+        except HTTPException:
+            raise
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"Erreur API Docker: {e}")
 
@@ -119,7 +122,9 @@ def creer_container(demande: ConteneurACreer, _: str = Depends(exiger_admin)):
                 demarrage.raise_for_status()
 
             data = _verifier_et_recuperer_gere(session, container_id)
-            return _formater_detail_conteneur(data)
+            detail = _formater_detail_conteneur(data)
+            netbox_client.creer_vm_active(detail["name"])
+            return detail
     except HTTPException:
         raise
     except requests.exceptions.RequestException as e:
@@ -144,7 +149,9 @@ def arreter_container(container_id: str, _: str = Depends(exiger_admin)):
             stop_resp.raise_for_status()
 
             data = _verifier_et_recuperer_gere(session, container_id)
-            return _formater_detail_conteneur(data)
+            detail = _formater_detail_conteneur(data)
+            netbox_client.definir_statut_vm(detail["name"], "offline")
+            return detail
     except HTTPException:
         raise
     except requests.exceptions.RequestException as e:
@@ -168,7 +175,9 @@ def demarrer_container(container_id: str, _: str = Depends(exiger_admin)):
             start_resp.raise_for_status()
 
             data = _verifier_et_recuperer_gere(session, container_id)
-            return _formater_detail_conteneur(data)
+            detail = _formater_detail_conteneur(data)
+            netbox_client.definir_statut_vm(detail["name"], "active")
+            return detail
     except HTTPException:
         raise
     except requests.exceptions.RequestException as e:
@@ -179,7 +188,8 @@ def demarrer_container(container_id: str, _: str = Depends(exiger_admin)):
 def supprimer_container(container_id: str, _: str = Depends(exiger_admin)):
     try:
         with requests.Session() as session:
-            _verifier_et_recuperer_gere(session, container_id)
+            data = _verifier_et_recuperer_gere(session, container_id)
+            detail = _formater_detail_conteneur(data)
 
             del_resp = session.delete(
                 f"{DOCKER_API_URL}/containers/{container_id}",
@@ -190,6 +200,7 @@ def supprimer_container(container_id: str, _: str = Depends(exiger_admin)):
                 raise HTTPException(status_code=404, detail="Conteneur inconnu")
             del_resp.raise_for_status()
 
+            netbox_client.supprimer_vm(detail["name"])
             return Response(status_code=204)
     except HTTPException:
         raise
