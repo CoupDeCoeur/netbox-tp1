@@ -1,34 +1,83 @@
+import hmac
 import os
-import secrets
-from fastapi import Depends, HTTPException
+from typing import Annotated
+
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-API_TOKEN_ADMIN = os.environ["API_TOKEN_ADMIN"]
-API_TOKEN_READER = os.environ["API_TOKEN_READER"]
-
-bearer = HTTPBearer(auto_error=False)
+security = HTTPBearer(auto_error=False)
 
 
-def role_de(credentials: HTTPAuthorizationCredentials | None) -> str:
-    if credentials is not None and credentials.scheme.lower() == "bearer":
-        recu = credentials.credentials.encode()
-        if secrets.compare_digest(recu, API_TOKEN_ADMIN.encode()):
-            return "admin"
-        if secrets.compare_digest(recu, API_TOKEN_READER.encode()):
-            return "lecteur"
-    raise HTTPException(
-        status_code=401,
-        detail="Token absent ou inconnu",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def _charger_secrets() -> tuple[str, str, str]:
+    admin_token = os.environ.get("API_TOKEN_ADMIN", "").strip()
+    reader_token = os.environ.get("API_TOKEN_READER", "").strip()
+    webhook_secret = os.environ.get("WEBHOOK_SECRET", "").strip()
+    return admin_token, reader_token, webhook_secret
 
 
-def exiger_lecture(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> str:
-    return role_de(credentials)
+def _verifier_jeton_bearer(
+    credentials: HTTPAuthorizationCredentials | None,
+    roles_autorises: set[str],
+) -> str:
+    admin_token, reader_token, _ = _charger_secrets()
 
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentification Bearer requise",
+        )
 
-def exiger_admin(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> str:
-    role = role_de(credentials)
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Action réservée au rôle admin")
+    jeton = credentials.credentials.strip()
+    if not jeton:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Jeton manquant",
+        )
+
+    if admin_token and hmac.compare_digest(jeton, admin_token):
+        role = "admin"
+    elif reader_token and hmac.compare_digest(jeton, reader_token):
+        role = "lecteur"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Jeton invalide",
+        )
+
+    if role not in roles_autorises:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Droits insuffisants",
+        )
+
     return role
+
+
+def exiger_lecture(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> str:
+    return _verifier_jeton_bearer(credentials, {"admin", "lecteur"})
+
+
+def exiger_admin(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> str:
+    return _verifier_jeton_bearer(credentials, {"admin"})
+
+
+def exiger_secret_webhook(
+    x_webhook_secret: Annotated[str | None, Header(alias="X-Webhook-Secret")] = None,
+) -> None:
+    _, _, webhook_secret = _charger_secrets()
+
+    if not webhook_secret or not x_webhook_secret:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Header X-Webhook-Secret manquant",
+        )
+
+    if not hmac.compare_digest(x_webhook_secret, webhook_secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Header X-Webhook-Secret invalide",
+        )
